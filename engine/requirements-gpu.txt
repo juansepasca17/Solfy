@@ -1,0 +1,5 @@
+# Modo GPU (DirectML). Reemplaza al `onnxruntime` que instala faster-whisper: ambos paquetes
+# proveen el mismo módulo `onnxruntime`, y la variante DirectML incluye también la CPU.
+# Instalar DESPUÉS de requirements.txt:
+#   pip uninstall -y onnxruntime && pip install -r requirements-gpu.txt
+onnxruntime-directml==1.24.4

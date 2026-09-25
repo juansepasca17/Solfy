@@ -94,6 +94,18 @@ function registerIpc() {
     return true;
   });
 
+  handle('engine:setDevice', (device) => {
+    runner.setDevice(device);
+    return true;
+  });
+
+  // Nombres de las GPU (Electron) + si el motor puede usar DirectML y tiene los modelos ONNX.
+  handle('engine:gpuInfo', async () => {
+    const names = await gpuNames();
+    const dev = await runner.devices();
+    return { names, available: dev.dml && dev.models && names.length > 0, dml: dev.dml, models: dev.models };
+  });
+
   handle('engine:cancel', (id) => {
     library.dir(id);
     runner.cancel(id);
@@ -108,6 +120,16 @@ function registerIpc() {
   handle('scores:list', () => library.scores());
 
   handle('app:info', () => ({ version: app.getVersion(), dark: nativeTheme.shouldUseDarkColors }));
+}
+
+/** GPUs físicas según Electron (sin el renderizador por software de Microsoft). */
+async function gpuNames() {
+  try {
+    const info = await app.getGPUInfo('complete');
+    return (info.gpuDevice || []).filter((d) => d.vendorId !== 0x1414 && d.deviceString && !/Basic Render/i.test(d.deviceString)).map((d) => d.deviceString);
+  } catch {
+    return [];
+  }
 }
 
 async function importOne(p, opts) {
@@ -162,6 +184,7 @@ app.whenReady().then(() => {
   library = new Library(app.getPath('userData'));
   library.markInterrupted();
   runner = new EngineRunner(library, (ev) => send('engine:event', ev));
+  gpuNames().then((names) => (runner.hardwareGpu = names.length > 0));
   appProtocol.install(library);
   registerIpc();
   createWindow();

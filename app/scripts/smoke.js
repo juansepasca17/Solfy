@@ -41,6 +41,7 @@ module.exports = async function smoke({ win, library, runner }) {
   try {
     await new Promise((r) => (win.webContents.isLoading() ? win.webContents.once('did-finish-load', r) : r()));
     await sleep(800);
+    if (process.env.SOLFY_SMOKE_DEVICE) runner.setDevice(process.env.SOLFY_SMOKE_DEVICE);
     let song = library.list().find((s) => s.status === 'ready');
     if (!song) {
       song = await library.importMp3(mp3, { lyrics: process.env.SOLFY_SMOKE_LYRICS === '1' });
@@ -89,7 +90,10 @@ module.exports = async function smoke({ win, library, runner }) {
     await js(`document.querySelector('[data-play=listen]').click(); document.querySelector('[data-diff=normal]').click()`);
     await sleep(800);
     const dir = library.dir(song.id);
-    fs.writeFileSync(path.join(dir, 'lyrics.json'), JSON.stringify([{ word: 'Do', start: 0.05, end: 0.4 }, { word: 're', start: 0.5, end: 0.9 }, { word: 'mi', start: 1.0, end: 1.4 }]));
+    // letra de prueba solo si la canción no trae una transcripción real
+    if (!fs.existsSync(path.join(dir, 'lyrics.json'))) {
+      fs.writeFileSync(path.join(dir, 'lyrics.json'), JSON.stringify([{ word: 'Do', start: 0.05, end: 0.4 }, { word: 're', start: 0.5, end: 0.9 }, { word: 'mi', start: 1.0, end: 1.4 }]));
+    }
     await js(`document.querySelector('[data-view=library]').click()`);
     await sleep(300);
     await js(`document.querySelector('.song[data-id="${song.id}"] [data-act=open]').click()`);

@@ -14,6 +14,7 @@ const STAGES = {
   separating: 'Separando la voz…',
   saving: 'Guardando pistas…',
   pitch: 'Detectando la melodía…',
+  pitch_lyrics: 'Detectando la melodía y la letra…',
   beats: 'Buscando el pulso…',
   notes: 'Creando notas…',
   lyrics: 'Transcribiendo la letra…',
@@ -66,6 +67,15 @@ function fmtDuration(sec) {
   return `${Math.round(sec / 60)} min`;
 }
 
+/** " con GPU" / " con CPU" / " con CPU (la GPU falló)" según meta.device del motor. */
+function deviceLabel(d) {
+  if (!d) return '';
+  if (d.separation === 'gpu' && d.pitch === 'gpu') return ' con GPU';
+  if (d.gpu_error) return ' con CPU (la GPU falló)';
+  if (d.separation === 'gpu' || d.pitch === 'gpu') return ' con GPU + CPU';
+  return ' con CPU';
+}
+
 /** "Detectando la melodía… 42% · quedan ~3 min" */
 function progressLabel(p) {
   if (!p) return 'Procesando…';
@@ -85,7 +95,7 @@ async function renderLibrary() {
       let sub = '';
       let actions = '';
       if (s.status === 'ready') {
-        sub = `${fmtTime(s.duration)}${s.hasLyrics ? ' · con letra' : ''}${s.processSeconds ? ` · procesada en ${fmtDuration(s.processSeconds)}` : ''}${s.warning ? ` · <span class="err">${esc(s.warning)}</span>` : ''}`;
+        sub = `${fmtTime(s.duration)}${s.hasLyrics ? ' · con letra' : ''}${s.processSeconds ? ` · procesada en ${fmtDuration(s.processSeconds)}${deviceLabel(s.device)}` : ''}${s.warning ? ` · <span class="err">${esc(s.warning)}</span>` : ''}`;
         actions = `<button class="btn primary" data-act="open">Practicar</button><button class="btn" data-act="rename">Renombrar</button><button class="btn danger" data-act="delete">Borrar</button>`;
       } else if (s.status === 'processing' || s.status === 'queued') {
         const pct = p ? Math.round(p.pct * 100) : 0;
@@ -181,6 +191,10 @@ window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
 
 window.solfy.engine.onEvent((ev) => {
+  if (ev.notice) {
+    toast(ev.notice);
+    return;
+  }
   if (ev.status === 'processing') progress.set(ev.id, { stage: ev.stage, pct: ev.pct || 0, elapsed: ev.elapsed || 0 });
   else progress.delete(ev.id);
   if (ev.status === 'ready') toast('¡Lista! Ya puedes practicar la canción.');
@@ -264,11 +278,37 @@ async function openSettings() {
   const mics = await listMics();
   $('#set-mic').innerHTML = '<option value="">Predeterminado</option>' + mics.filter((m) => m.deviceId && m.deviceId !== 'default').map((m, i) => `<option value="${esc(m.deviceId)}">${esc(m.label || `Micrófono ${i + 1}`)}</option>`).join('');
   $('#set-mic').value = settings.micId;
+  $('#set-device').value = settings.device;
+  showGpuInfo();
   const info = await window.solfy.info();
   $('#about').textContent = `Solfy ${info.version} · Piano: Salamander Grand Piano (CC-BY 3.0, Alexander Holm) · Separación: Demucs · Tono: CREPE`;
   $('#settings-dialog').showModal();
 }
 $('#btn-settings').addEventListener('click', openSettings);
+
+let gpuInfo = null;
+async function showGpuInfo() {
+  const el = $('#gpu-info');
+  try {
+    gpuInfo = gpuInfo || (await window.solfy.engine.gpuInfo());
+  } catch {
+    gpuInfo = { names: [], available: false };
+  }
+  const names = gpuInfo.names.join(' · ') || 'ninguna';
+  if (gpuInfo.available) {
+    el.textContent = `GPU: ${names}. DirectML listo: el modo GPU usa la más potente. Si falla, la canción se termina en CPU.`;
+  } else if (!gpuInfo.dml) {
+    el.textContent = `GPU: ${names}. DirectML no está disponible en esta PC: se usará CPU.`;
+  } else {
+    el.textContent = `GPU: ${names}. Faltan los modelos de GPU en esta instalación: se usará CPU.`;
+  }
+}
+
+$('#set-device').addEventListener('change', async (e) => {
+  settings.device = e.target.value;
+  await window.solfy.engine.setDevice(settings.device);
+  if (settings.device === 'gpu' && gpuInfo && !gpuInfo.available) toast('No hay GPU compatible: las canciones se procesarán en CPU.');
+});
 $('#set-close').addEventListener('click', () => $('#settings-dialog').close());
 $('#set-notation').addEventListener('change', (e) => {
   settings.notation = e.target.value;
@@ -315,4 +355,5 @@ $('#btn-calibrate').addEventListener('click', async () => {
 });
 
 // ---------- arranque ----------
+window.solfy.engine.setDevice(settings.device).catch(() => {});
 renderLibrary();

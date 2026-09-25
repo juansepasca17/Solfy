@@ -4,12 +4,13 @@
 
 Subes un MP3 y Solfy separa la voz de la música, convierte la melodía del cantante en notas de piano y te deja cantar o solfear encima. Las notas que tienes que cantar aparecen como barras rojas que se acercan a una línea central. Tu voz se dibuja en verde encima de ellas. Al final de cada canción recibes un puntaje, y se guarda un historial con tus promedios.
 
-> Prototipo v0.1 para Windows. Funciona sin internet y no envía tus datos a ningún lado (ver [PRIVACY.md](PRIVACY.md)).
+> Prototipo v0.2 para Windows. Funciona sin internet y no envía tus datos a ningún lado (ver [PRIVACY.md](PRIVACY.md)).
 
 ## Qué hace
 
 - **Solo MP3** (hasta 60 MB / 15 min). El procesamiento es local y tarda unos minutos por canción en una CPU normal. Se hace una sola vez. (Es recomendado mp3 por debajo de las 5 mb para mejor estabilidad)
 - **Separación de voz** con Demucs (`htdemucs`) y **melodía** con CREPE.
+- **Procesamiento con GPU (DirectML)** en cualquier GPU DirectX 12 de Windows (AMD, Intel o NVIDIA), unas 4 veces más rápido. Se elige en *Ajustes → Procesamiento de canciones* (ver [Rendimiento](#rendimiento)).
 - **Dos dificultades:**
   - **Normal:** la melodía como la canta el artista.
   - **Aprendizaje:** una versión "redondeada". Las notas rápidas y los adornos se absorben en notas largas, los huecos pequeños se rellenan y todo se ajusta a la grilla de corcheas. Sirve para aprender la línea antes de pasar al modo Normal.
@@ -29,6 +30,28 @@ Subes un MP3 y Solfy separa la voz de la música, convierte la melodía del cant
 3. Usa **audífonos** para cantar. Si no, el micrófono capta el piano y la música de los parlantes.
 
 El instalador es grande (cientos de MB) porque trae adentro los modelos de IA. Así la app nunca tiene que conectarse a internet.
+
+## Rendimiento
+
+En *Ajustes → Procesamiento de canciones* hay tres opciones:
+
+- **Automático (recomendado):** usa la GPU si hay una compatible; si no, la CPU.
+- **Normal (CPU):** el modo de siempre, el más probado.
+- **GPU (DirectML):** fuerza la GPU.
+
+Si la GPU falla a mitad del proceso, la canción se termina en CPU sin que tengas que hacer nada. La tarjeta de cada canción indica cuánto tardó y con qué se procesó.
+
+Tiempos medidos con *Gitana* (6:54) en una laptop Ryzen 5 7535HS con Radeon RX 6550M:
+
+| Etapa | Normal (CPU) | GPU (DirectML) |
+|---|---|---|
+| Separación de voz | ~2.3 min | ~1.1 min |
+| Detección de melodía | ~10.4 min | ~1.7 min |
+| **Total** | **~13–14 min** | **~3 min** (con letra incluida) |
+
+Las notas de los dos modos coinciden en un ~96 %. Las pequeñas diferencias vienen de redondeos numéricos distintos entre CPU y GPU. Con la letra activada, en modo GPU Whisper corre en la CPU al mismo tiempo que la GPU detecta la melodía.
+
+Vulkan no sirve para esto: PyTorch solo lo soporta en celulares y los modelos no tienen versión Vulkan. En Windows, DirectML es la vía que funciona con GPUs AMD.
 
 ## Cómo funciona
 
@@ -68,18 +91,24 @@ Requisitos: Python 3.11 (con [uv](https://docs.astral.sh/uv/) o similar) y Node 
 cd engine
 uv venv --python 3.11 .venv
 uv pip install --python .venv/Scripts/python.exe -r requirements-dev.txt --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+# modo GPU: onnxruntime-directml reemplaza al onnxruntime que trae faster-whisper
+uv pip uninstall --python .venv/Scripts/python.exe onnxruntime
+uv pip install --python .venv/Scripts/python.exe -r requirements-gpu.txt
 .venv/Scripts/python -m pytest -q tests
 cd ..
 engine/.venv/Scripts/python scripts/fetch_models.py      # descarga los modelos a models/
-cd app && npm install && npm start
+engine/.venv/Scripts/python scripts/export_onnx.py       # exporta los modelos del modo GPU a models/onnx/
+cd app && npm install && npm test && npm start
 ```
 
 En desarrollo, la app usa `engine/.venv` directamente. Para probar el motor solo:
 
 ```bash
 engine/.venv/Scripts/python scripts/make_test_song.py prueba.mp3
-cd engine && .venv/Scripts/python -m solfy_engine process --input ../prueba.mp3 --out ../salida --models ../models
+cd engine && .venv/Scripts/python -m solfy_engine process --input ../prueba.mp3 --out ../salida --models ../models --device auto
 ```
+
+Cada canción procesada deja un `engine.log` en su carpeta con el tiempo de cada etapa y el dispositivo usado. Para comparar CPU y GPU con una canción: `scripts/bench_gpu.py cancion.mp3 carpeta_salida_cpu`.
 
 ### Build del instalador
 
@@ -95,9 +124,10 @@ Sube un tag `vX.Y.Z` que coincida con la versión de `app/package.json`. El work
 ## Estructura
 
 ```
-engine/   motor Python (separación, tono, notas) → solfy-engine.exe
-app/      Electron + HTML/Canvas/JS nativo (sin frameworks)
-scripts/  descarga de modelos, canción de prueba, ícono
+engine/                       motor Python (separación, tono, notas) → solfy-engine.exe
+engine/solfy_engine/backends  modo GPU: ONNX Runtime + DirectML
+app/                          Electron + HTML/Canvas/JS nativo (sin frameworks)
+scripts/                      descarga y exportación de modelos, benchmark, canción de prueba, ícono
 ```
 
 ## Aviso

@@ -30,13 +30,18 @@ jobs:
           cache-dependency-path: engine/requirements*.txt
 
       - name: Dependencias del motor
-        run: pip install -r engine/requirements-dev.txt --extra-index-url https://download.pytorch.org/whl/cpu
+        run: |
+          pip install -r engine/requirements-dev.txt --extra-index-url https://download.pytorch.org/whl/cpu
+          pip uninstall -y onnxruntime
+          pip install -r engine/requirements-gpu.txt
 
       - name: Pruebas del motor
         run: pytest -q engine/tests
 
       - name: Modelos (se empaquetan; la app nunca descarga nada)
-        run: python scripts/fetch_models.py --out models
+        run: |
+          python scripts/fetch_models.py --out models
+          python scripts/export_onnx.py --models models
 
       - name: Motor -> exe (PyInstaller)
         working-directory: engine
@@ -46,7 +51,10 @@ jobs:
         shell: bash
         run: |
           python scripts/make_test_song.py test_song.mp3
-          SOLFY_MODELS="$PWD/models" engine/dist/solfy-engine/solfy-engine.exe process --input test_song.mp3 --out smoke_out | tail -n 2
+          # Los runners de GitHub no tienen GPU: se prueba el modo CPU y que DirectML venga empaquetado.
+          SOLFY_MODELS="$PWD/models" engine/dist/solfy-engine/solfy-engine.exe devices | tee devices.txt
+          grep -q '"dml": true' devices.txt && grep -q '"models": true' devices.txt
+          SOLFY_MODELS="$PWD/models" engine/dist/solfy-engine/solfy-engine.exe process --input test_song.mp3 --out smoke_out --device cpu | tail -n 2
           python -c "import json; n=json.load(open('smoke_out/notes.json')); print(len(n), 'notas'); assert len(n) >= 20"
 
       - uses: actions/setup-node@v4

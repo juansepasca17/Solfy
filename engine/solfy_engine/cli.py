@@ -167,10 +167,29 @@ def _run(args: argparse.Namespace, out: Path, models_dir: Path, log: "EngineLog"
     from .separate import separate
     from .tuning import estimate_offset_cents
 
-    stages = [("decoding", 2), ("separating", 30), ("saving", 3), ("pitch", 55), ("beats", 4), ("notes", 3)]
-    if args.lyrics:
-        stages.append(("lyrics", 40))
+    use_gpu = _want_gpu(args.device, models_dir, log)
+    used = {"separation": "cpu", "pitch": "cpu", "gpu_error": None}
+    # Pesos ≈ segundos por minuto de canción medidos en una Ryzen 5 7535HS / RX 6550M.
+    parallel_lyrics = bool(args.lyrics and use_gpu)
+    if use_gpu:
+        stages = [("decoding", 0.2), ("separating", 10), ("saving", 2), ("pitch", 15), ("beats", 0.5), ("notes", 0.5)]
+    else:
+        stages = [("decoding", 0.2), ("separating", 20), ("saving", 2), ("pitch", 90), ("beats", 0.5), ("notes", 0.5)]
+    if parallel_lyrics:
+        # Whisper (CPU) corre a la vez que CREPE (GPU): una sola etapa combinada.
+        stages[3] = ("pitch_lyrics", 30)
+    elif args.lyrics:
+        stages.append(("lyrics", 30))
     prog = Progress(stages, log)
+
+    def gpu_failed(stage: str, exc: BaseException) -> None:
+        nonlocal use_gpu
+        import traceback
+
+        use_gpu = False
+        used["gpu_error"] = f"{type(exc).__name__}: {exc}"
+        log.write(f"La GPU falló durante {stage}; se continúa en CPU\n" + traceback.format_exc())
+        emit({"type": "notice", "message": "La GPU falló; se continúa en CPU"})
 
     rep = prog.reporter("decoding")
     rep(0.0)
@@ -178,7 +197,18 @@ def _run(args: argparse.Namespace, out: Path, models_dir: Path, log: "EngineLog"
     duration = audio.shape[1] / sr
     rep(1.0)
 
-    vocals, instrumental, sr = separate(audio, sr, models_dir, prog.reporter("separating"))
+    rep = prog.reporter("separating")
+    if use_gpu:
+        try:
+            from .backends import onnx_dml
+
+            vocals, instrumental, sr_out = onnx_dml.separate(audio, sr, models_dir, rep, log.write)
+            used["separation"] = "gpu"
+        except Exception as exc:
+            gpu_failed("la separación", exc)
+    if used["separation"] == "cpu":
+        vocals, instrumental, sr_out = separate(audio, sr, models_dir, rep)
+    sr = sr_out
     del audio
 
     rep = prog.reporter("saving")
@@ -186,7 +216,22 @@ def _run(args: argparse.Namespace, out: Path, models_dir: Path, log: "EngineLog"
     write_ogg(out / "vocals.ogg", vocals, sr, lambda f: rep(0.5 + f * 0.5))
 
     vocals16k = to_mono_16k(vocals, sr)
-    freq, periodicity = track(vocals16k, prog.reporter("pitch"), model=args.pitch_model)
+    words = None
+    if parallel_lyrics and use_gpu:
+        freq, periodicity, words = _pitch_and_lyrics_parallel(vocals16k, models_dir, duration, prog.reporter("pitch_lyrics"), used, gpu_failed, log)
+    else:
+        rep = prog.reporter("pitch_lyrics" if parallel_lyrics else "pitch")
+        freq = None
+        if use_gpu:
+            try:
+                from .backends import onnx_dml
+
+                freq, periodicity = onnx_dml.track(vocals16k, rep, models_dir, log.write)
+                used["pitch"] = "gpu"
+            except Exception as exc:
+                gpu_failed("la detección de tono", exc)
+        if freq is None:
+            freq, periodicity = track(vocals16k, rep, model=args.pitch_model)
     rms_db = frame_rms_db(vocals16k, len(freq))
     midi = voiced_midi(freq, periodicity, rms_db)
 
@@ -219,18 +264,96 @@ def _run(args: argparse.Namespace, out: Path, models_dir: Path, log: "EngineLog"
         "engine_version": __version__,
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "lyrics": False,
+        "device": used,
     }
     rep(1.0)
 
     if args.lyrics:
-        from .lyrics import transcribe
+        if words is None:
+            from .lyrics import transcribe
 
-        words = transcribe(vocals16k, models_dir, duration, prog.reporter("lyrics"))
+            rep = prog.reporter("lyrics") if not parallel_lyrics else (lambda _f: None)
+            words = transcribe(vocals16k, models_dir, duration, rep)
         write_json(out / "lyrics.json", words)
         meta["lyrics"] = True
 
+    log.write(f"dispositivos: separación={used['separation']} tono={used['pitch']}" + (f" (error GPU: {used['gpu_error']})" if used["gpu_error"] else ""))
     write_json(out / "meta.json", meta)
     emit({"type": "done"})
+
+
+def _dml_available() -> bool:
+    try:
+        import onnxruntime as ort
+
+        return "DmlExecutionProvider" in ort.get_available_providers()
+    except Exception:
+        return False
+
+
+def _gpu_models_present(models_dir: Path) -> bool:
+    return all((models_dir / "onnx" / f).is_file() for f in ("htdemucs_core.onnx", "crepe_full.onnx"))
+
+
+def _want_gpu(device: str, models_dir: Path, log: "EngineLog") -> bool:
+    if device == "cpu":
+        log.write("modo Normal (CPU)")
+        return False
+    if not _dml_available():
+        log.write("no hay GPU DirectML disponible; se usa CPU")
+        if device == "gpu":
+            emit({"type": "notice", "message": "No se encontró una GPU compatible; se usa CPU"})
+        return False
+    if not _gpu_models_present(models_dir):
+        log.write("faltan los modelos ONNX; se usa CPU")
+        if device == "gpu":
+            emit({"type": "notice", "message": "Faltan los modelos de GPU; se usa CPU"})
+        return False
+    log.write(f"modo GPU (DirectML), pedido: {device}")
+    return True
+
+
+def _pitch_and_lyrics_parallel(vocals16k, models_dir: Path, duration: float, report, used: dict, gpu_failed, log: "EngineLog"):
+    """CREPE en la GPU y Whisper en la CPU al mismo tiempo. El avance es el de la tarea más atrasada."""
+    import threading
+
+    from .backends import onnx_dml
+    from .lyrics import transcribe
+    from .pitch import track
+
+    fracs = {"pitch": 0.0, "lyrics": 0.0}
+    lock = threading.Lock()
+
+    def part(name: str):
+        def rep(f: float) -> None:
+            with lock:
+                fracs[name] = f
+                report(min(fracs.values()))
+
+        return rep
+
+    result: dict = {}
+
+    def run_lyrics() -> None:
+        try:
+            result["words"] = transcribe(vocals16k, models_dir, duration, part("lyrics"))
+        except BaseException as exc:  # se relanza en el hilo principal
+            result["lyrics_error"] = exc
+
+    th = threading.Thread(target=run_lyrics, name="whisper", daemon=True)
+    th.start()
+    freq = None
+    try:
+        freq, periodicity = onnx_dml.track(vocals16k, part("pitch"), models_dir, log.write)
+        used["pitch"] = "gpu"
+    except Exception as exc:
+        gpu_failed("la detección de tono", exc)
+    if freq is None:
+        freq, periodicity = track(vocals16k, part("pitch"))
+    th.join()
+    if "lyrics_error" in result:
+        raise result["lyrics_error"]
+    return freq, periodicity, result["words"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -244,13 +367,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--lyrics", action="store_true")
     p.add_argument("--pitch-model", choices=["full", "tiny"], default="full")
     p.add_argument("--threads", type=int, default=0, help="hilos de CPU (0 = todos menos 2)")
+    p.add_argument("--device", choices=["auto", "cpu", "gpu"], default="auto", help="auto = GPU DirectML si hay, si no CPU")
     sub.add_parser("version")
+    d = sub.add_parser("devices", help="¿Hay GPU DirectML y modelos ONNX?")
+    d.add_argument("--models")
     args = parser.parse_args(argv)
 
     if args.cmd == "version":
         from . import __version__
 
         emit({"type": "version", "version": __version__})
+        return 0
+    if args.cmd == "devices":
+        models_dir = Path(args.models) if args.models else _default_models_dir()
+        emit({"type": "devices", "dml": _dml_available(), "models": _gpu_models_present(models_dir)})
         return 0
     try:
         process(args)

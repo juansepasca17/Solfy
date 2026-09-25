@@ -1,13 +1,14 @@
-**Solfy v0.1.1** corrige el congelamiento con canciones largas.
+**Solfy v0.2.0** agrega el procesamiento con GPU (DirectML).
 
-**Corregido**
-- La app se quedaba en "No responde" al terminar de procesar algunas canciones (por ejemplo, Gitana de 6 minutos). La causa era que en el modo Aprendizaje la primera nota podía quedar con un tiempo negativo, y eso dejaba en un bucle infinito al generador de MIDI. Se corrigió en el motor y, además, el generador de MIDI ahora descarta tiempos inválidos en lugar de colgarse.
-- El proceso principal de la app ya no hace trabajo pesado de forma síncrona al terminar una canción.
+**Novedades**
+- **Modo GPU con DirectML:** funciona con cualquier GPU DirectX 12 en Windows (AMD, Intel o NVIDIA). Con *Gitana* (6:54) en una Radeon RX 6550M, el procesamiento pasó de ~13 minutos en CPU a **~3 minutos**, con la letra incluida.
+- **Ajustes → Procesamiento de canciones:** Automático (GPU si hay; si no, CPU), Normal (CPU) o GPU. En Ajustes se muestra qué GPU se detectó.
+- **Red de seguridad:** si la GPU falla a mitad del proceso, la canción se termina en CPU automáticamente.
+- Con la letra activada, en modo GPU Whisper transcribe en la CPU al mismo tiempo que la GPU detecta la melodía.
+- Cada tarjeta indica cuánto tardó el procesamiento y si se usó GPU o CPU.
 
-**Mejoras**
-- El motor corre con prioridad baja: puedes seguir usando la app y la PC mientras procesa.
-- La tarjeta muestra el tiempo restante estimado y, al final, cuánto tardó el procesamiento.
-- Si el motor deja de responder durante 10 minutos, la canción se marca con error en lugar de quedarse esperando para siempre.
-- Cada canción guarda un registro local (`engine.log`) con el tiempo de cada etapa, útil para diagnosticar problemas.
+**Detalles**
+- El modo Normal (CPU) es exactamente el mismo de antes. Las notas de los dos modos coinciden en un ~96 %.
+- El instalador pesa unos 250 MB más, porque incluye los modelos del modo GPU. Todo sigue funcionando sin internet.
 
-**Instalación:** descarga `Solfy-Setup-0.1.1.exe`. El instalador no está firmado, así que SmartScreen muestra un aviso: *Más información → Ejecutar de todas formas*.
+**Instalación:** descarga `Solfy-Setup-0.2.0.exe`. El instalador no está firmado, así que SmartScreen muestra un aviso: *Más información → Ejecutar de todas formas*.

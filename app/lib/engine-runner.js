@@ -45,6 +45,40 @@ class EngineRunner {
     this.notify = notify; // (event) => void
     this.queue = [];
     this.current = null;
+    this.device = 'auto'; // 'auto' | 'cpu' | 'gpu' (Ajustes → Procesamiento de canciones)
+    this.hardwareGpu = null; // true/false cuando main.js consulta a Electron
+  }
+
+  setDevice(device) {
+    if (!['auto', 'cpu', 'gpu'].includes(device)) throw new Error('Dispositivo inválido');
+    this.device = device;
+  }
+
+  /** ¿Hay GPU DirectML y modelos ONNX? Pregunta al motor una sola vez. */
+  devices() {
+    if (!this._devices) {
+      this._devices = new Promise((resolve) => {
+        const { cmd, pre, cwd, models } = engineCommand();
+        if (!fs.existsSync(cmd)) return resolve({ dml: false, models: false });
+        const child = spawn(cmd, [...pre, 'devices', '--models', models], { cwd, env: engineEnv(models), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+        let out = '';
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', (d) => (out += d));
+        const timer = setTimeout(() => killTree(child), 60000);
+        child.on('close', () => {
+          clearTimeout(timer);
+          const line = out.split('\n').find((l) => l.includes('"devices"'));
+          try {
+            const ev = JSON.parse(line);
+            resolve({ dml: !!ev.dml, models: !!ev.models });
+          } catch {
+            resolve({ dml: false, models: false });
+          }
+        });
+        child.on('error', () => resolve({ dml: false, models: false }));
+      });
+    }
+    return this._devices;
   }
 
   enqueue(id) {
@@ -91,7 +125,9 @@ class EngineRunner {
       this.notify({ id, status: 'error', error });
       return this._next();
     }
-    const args = [...pre, 'process', '--input', path.join(dir, 'source.mp3'), '--out', dir, '--title', song.title];
+    // Sin GPU física (solo el renderizador por software de Windows), "Automático" = CPU.
+    const device = this.device === 'auto' && this.hardwareGpu === false ? 'cpu' : this.device;
+    const args = [...pre, 'process', '--input', path.join(dir, 'source.mp3'), '--out', dir, '--title', song.title, '--device', device];
     if (song.lyricsRequested) args.push('--lyrics');
 
     const child = spawn(cmd, args, { cwd, env: engineEnv(models), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -133,6 +169,8 @@ class EngineRunner {
         job.lastEvent = Date.now();
         if (ev.type === 'progress') {
           this.notify({ id, status: 'processing', stage: ev.stage, pct: ev.pct, elapsed: (Date.now() - job.started) / 1000 });
+        } else if (ev.type === 'notice') {
+          this.notify({ id, status: 'processing', notice: String(ev.message || '') });
         } else if (ev.type === 'error') {
           job.error = String(ev.message || 'Error desconocido');
         } else if (ev.type === 'done') {
@@ -177,7 +215,8 @@ class EngineRunner {
           console.error('[solfy]', warning);
         }
         const seconds = Math.round((Date.now() - job.started) / 1000);
-        this.library.update(id, { status: 'ready', duration: meta.duration, hasLyrics: !!meta.lyrics, progress: 1, processSeconds: seconds, warning });
+        const device = meta.device || null; // {separation, pitch, gpu_error}
+        this.library.update(id, { status: 'ready', duration: meta.duration, hasLyrics: !!meta.lyrics, progress: 1, processSeconds: seconds, warning, device });
         this.notify({ id, status: 'ready', warning });
       } else {
         const error = job.error || `El motor terminó con código ${code}`;

@@ -12,6 +12,7 @@ const DEFAULTS = {
   showCurve: false,
   showLyrics: true,
   octaveFree: false,
+  device: 'auto', // procesamiento de canciones: 'auto' | 'cpu' | 'gpu'
 };
 
 let data = { ...DEFAULTS };

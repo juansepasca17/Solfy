@@ -152,6 +152,14 @@
         <option value="dark">Oscuro</option>
       </select>
     </label>
+    <label class="field block">Procesamiento de canciones
+      <select id="set-device">
+        <option value="auto">Automático (GPU si hay; si no, CPU)</option>
+        <option value="cpu">Normal (CPU) — el más probado</option>
+        <option value="gpu">GPU (DirectML)</option>
+      </select>
+    </label>
+    <p class="muted small" id="gpu-info">Buscando GPU…</p>
     <label class="field block">Micrófono
       <select id="set-mic"><option value="">Predeterminado</option></select>
     </label>

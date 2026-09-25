@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('solfy', {
   },
   engine: {
     cancel: invoke('engine:cancel'),
+    setDevice: invoke('engine:setDevice'),
+    gpuInfo: invoke('engine:gpuInfo'),
     onEvent: (cb) => {
       const listener = (_e, ev) => cb(ev);
       ipcRenderer.on('engine:event', listener);
