@@ -172,7 +172,10 @@ def _grid(beats: np.ndarray, subdivision: int, duration: float) -> np.ndarray:
     full = np.concatenate([before, beats, after])
     pts = [full[i] + (full[i + 1] - full[i]) * k / subdivision for i in range(len(full) - 1) for k in range(subdivision)]
     pts.append(full[-1])
-    return np.asarray(pts)
+    # Extender la grilla hacia atrás desde el primer beat produce puntos negativos: una nota
+    # ajustada ahí tendría inicio < 0 (en v0.1.0 eso colgaba el generador de MIDI).
+    pts = np.asarray(pts)
+    return np.unique(np.concatenate([[0.0], pts[pts > 0]]))
 
 
 def _snap(notes: list[Note], grid: np.ndarray) -> list[Note]:

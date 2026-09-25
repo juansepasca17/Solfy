@@ -52,10 +52,14 @@ def load_mp3(path: Path) -> tuple[np.ndarray, int]:
     return np.ascontiguousarray(audio), sr
 
 
-def write_ogg(path: Path, audio: np.ndarray, sr: int) -> None:
+def write_ogg(path: Path, audio: np.ndarray, sr: int, report=None) -> None:
     """Escribe [canales, muestras] como OGG Vorbis, por bloques (libsndfile falla con bloques enormes)."""
     frames = np.clip(audio.T, -1.0, 1.0).astype(np.float32)
     block = 1 << 15
     with sf.SoundFile(str(path), "w", samplerate=sr, channels=frames.shape[1], format="OGG", subtype="VORBIS") as f:
         for i in range(0, len(frames), block):
             f.write(frames[i : i + block])
+            if report and (i // block) % 40 == 0:
+                report(min(1.0, (i + block) / len(frames)))
+    if report:
+        report(1.0)

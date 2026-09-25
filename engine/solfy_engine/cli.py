@@ -1,4 +1,4 @@
-"""CLI del motor. Emite una lÃ­nea JSON por evento en stdout:
+"""CLI del motor. Emite una línea JSON por evento en stdout:
 
   {"type":"progress","stage":"separating","pct":0.42}
   {"type":"done"}
@@ -28,7 +28,7 @@ def _default_models_dir() -> Path:
 
 
 def _force_offline(models_dir: Path) -> None:
-    """Ninguna librerÃ­a debe intentar descargar nada en tiempo de ejecuciÃ³n."""
+    """Ninguna librería debe intentar descargar nada en tiempo de ejecución."""
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -46,8 +46,65 @@ def emit(obj: dict) -> None:
     _EVENTS.flush()
 
 
+def _rss_mb() -> float | None:
+    """Memoria del proceso (Windows), para el log."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class PMC(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                (n, ctypes.c_size_t)
+                for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage", "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")
+            ]
+
+        pmc = PMC()
+        pmc.cb = ctypes.sizeof(PMC)
+        ok = ctypes.windll.psapi.GetProcessMemoryInfo(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb)
+        return round(pmc.WorkingSetSize / 2**20) if ok else None
+    except Exception:
+        return None
+
+
+class EngineLog:
+    """engine.log en la carpeta de la canción: tiempos por etapa, memoria y errores. Solo local."""
+
+    def __init__(self, path: Path):
+        self.f = path.open("a", encoding="utf-8", buffering=1)
+        self.t0 = time.monotonic()
+        self.stage_t = self.t0
+        self.stage = None
+        # Si algo se cuelga, cada 15 min queda un volcado de dónde está cada hilo
+        # (en una canción larga procesada en CPU puede aparecer sin que haya un problema).
+        import faulthandler
+
+        faulthandler.enable(self.f)
+        faulthandler.dump_traceback_later(900, repeat=True, file=self.f)
+
+    def write(self, msg: str) -> None:
+        mem = _rss_mb()
+        self.f.write(f"[{time.monotonic() - self.t0:8.1f}s] {msg}{f'  (mem {mem} MB)' if mem else ''}\n")
+
+    def start(self, stage: str) -> None:
+        if self.stage:
+            self.write(f"fin {self.stage}: {time.monotonic() - self.stage_t:.1f}s")
+        self.stage, self.stage_t = stage, time.monotonic()
+        self.write(f"inicio {stage}")
+
+    def close(self) -> None:
+        import faulthandler
+
+        faulthandler.cancel_dump_traceback_later()
+        if self.stage:
+            self.write(f"fin {self.stage}: {time.monotonic() - self.stage_t:.1f}s")
+        self.write(f"total {time.monotonic() - self.t0:.1f}s")
+        self.f.close()
+
+
 class Progress:
-    def __init__(self, stages: list[tuple[str, float]]):
+    def __init__(self, stages: list[tuple[str, float]], log: "EngineLog | None" = None):
         total = sum(w for _, w in stages)
         self._ranges: dict[str, tuple[float, float]] = {}
         acc = 0.0
@@ -55,9 +112,12 @@ class Progress:
             self._ranges[name] = (acc / total, (acc + w) / total)
             acc += w
         self._last = 0.0
+        self._log = log
 
     def reporter(self, stage: str):
         a, b = self._ranges[stage]
+        if self._log:
+            self._log.start(stage)
 
         def report(frac: float) -> None:
             pct = a + (b - a) * max(0.0, min(1.0, frac))
@@ -72,8 +132,31 @@ def process(args: argparse.Namespace) -> None:
     models_dir = Path(args.models) if args.models else _default_models_dir()
     _force_offline(models_dir)
 
-    import numpy as np
     import torch
+
+    from . import __version__
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    log = EngineLog(out / "engine.log")
+    # Casi todos los hilos: la app lanza el motor con prioridad baja, así que la ventana y el
+    # sistema siguen respondiendo. Con solo los núcleos físicos, CREPE tarda casi el doble.
+    threads = args.threads or max(1, (os.cpu_count() or 2) - 2)
+    torch.set_num_threads(threads)
+    log.write(f"Solfy engine {__version__} · entrada {Path(args.input).name} · hilos {threads} · letra {bool(args.lyrics)}")
+    try:
+        _run(args, out, models_dir, log)
+    except BaseException:
+        import traceback
+
+        log.write("ERROR\n" + traceback.format_exc())
+        raise
+    finally:
+        log.close()
+
+
+def _run(args: argparse.Namespace, out: Path, models_dir: Path, log: "EngineLog") -> None:
+    import numpy as np
 
     from . import __version__
     from .audio_io import load_mp3, write_ogg
@@ -84,14 +167,10 @@ def process(args: argparse.Namespace) -> None:
     from .separate import separate
     from .tuning import estimate_offset_cents
 
-    torch.set_num_threads(max(1, os.cpu_count() or 1))
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-
-    stages = [("decoding", 2), ("separating", 55), ("saving", 4), ("pitch", 25), ("beats", 4), ("notes", 2)]
+    stages = [("decoding", 2), ("separating", 30), ("saving", 3), ("pitch", 55), ("beats", 4), ("notes", 3)]
     if args.lyrics:
-        stages.append(("lyrics", 30))
-    prog = Progress(stages)
+        stages.append(("lyrics", 40))
+    prog = Progress(stages, log)
 
     rep = prog.reporter("decoding")
     rep(0.0)
@@ -103,10 +182,8 @@ def process(args: argparse.Namespace) -> None:
     del audio
 
     rep = prog.reporter("saving")
-    write_ogg(out / "instrumental.ogg", instrumental, sr)
-    rep(0.5)
-    write_ogg(out / "vocals.ogg", vocals, sr)
-    rep(1.0)
+    write_ogg(out / "instrumental.ogg", instrumental, sr, lambda f: rep(f * 0.5))
+    write_ogg(out / "vocals.ogg", vocals, sr, lambda f: rep(0.5 + f * 0.5))
 
     vocals16k = to_mono_16k(vocals, sr)
     freq, periodicity = track(vocals16k, prog.reporter("pitch"), model=args.pitch_model)
@@ -166,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--title")
     p.add_argument("--lyrics", action="store_true")
     p.add_argument("--pitch-model", choices=["full", "tiny"], default="full")
+    p.add_argument("--threads", type=int, default=0, help="hilos de CPU (0 = todos menos 2)")
     sub.add_parser("version")
     args = parser.parse_args(argv)
 

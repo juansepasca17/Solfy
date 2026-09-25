@@ -59,7 +59,21 @@ async function openSong(id) {
 }
 
 // ---------- biblioteca ----------
-const progress = new Map(); // id -> {stage, pct}
+const progress = new Map(); // id -> {stage, pct, elapsed}
+
+function fmtDuration(sec) {
+  if (sec < 60) return `${Math.max(1, Math.round(sec))} s`;
+  return `${Math.round(sec / 60)} min`;
+}
+
+/** "Detectando la melodía… 42% · quedan ~3 min" */
+function progressLabel(p) {
+  if (!p) return 'Procesando…';
+  const pct = Math.round((p.pct || 0) * 100);
+  let eta = '';
+  if (p.elapsed > 20 && p.pct > 0.05 && p.pct < 1) eta = ` · quedan ~${fmtDuration((p.elapsed * (1 - p.pct)) / p.pct)}`;
+  return `${STAGES[p.stage] || 'Procesando…'} ${pct}%${eta}`;
+}
 
 async function renderLibrary() {
   const songs = await window.solfy.library.list();
@@ -71,11 +85,11 @@ async function renderLibrary() {
       let sub = '';
       let actions = '';
       if (s.status === 'ready') {
-        sub = `${fmtTime(s.duration)}${s.hasLyrics ? ' · con letra' : ''}`;
+        sub = `${fmtTime(s.duration)}${s.hasLyrics ? ' · con letra' : ''}${s.processSeconds ? ` · procesada en ${fmtDuration(s.processSeconds)}` : ''}${s.warning ? ` · <span class="err">${esc(s.warning)}</span>` : ''}`;
         actions = `<button class="btn primary" data-act="open">Practicar</button><button class="btn" data-act="rename">Renombrar</button><button class="btn danger" data-act="delete">Borrar</button>`;
       } else if (s.status === 'processing' || s.status === 'queued') {
         const pct = p ? Math.round(p.pct * 100) : 0;
-        sub = `${s.status === 'queued' ? 'En cola…' : `${STAGES[p && p.stage] || 'Procesando…'} ${pct}%`}<div class="progress"><div data-pct="${pct}"></div></div>`;
+        sub = `${s.status === 'queued' ? 'En cola…' : esc(progressLabel(p))}<div class="progress"><div data-pct="${pct}"></div></div>`;
         actions = `<button class="btn" data-act="cancel">Cancelar</button>`;
       } else {
         sub = `<span class="err">${esc(s.error || 'Error')}</span>`;
@@ -167,7 +181,7 @@ window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
 
 window.solfy.engine.onEvent((ev) => {
-  if (ev.status === 'processing') progress.set(ev.id, { stage: ev.stage, pct: ev.pct || 0 });
+  if (ev.status === 'processing') progress.set(ev.id, { stage: ev.stage, pct: ev.pct || 0, elapsed: ev.elapsed || 0 });
   else progress.delete(ev.id);
   if (ev.status === 'ready') toast('¡Lista! Ya puedes practicar la canción.');
   if (ev.status === 'error' && ev.error !== 'Cancelado') toast('Error al procesar: ' + ev.error);
@@ -177,7 +191,7 @@ window.solfy.engine.onEvent((ev) => {
     if (ev.status === 'processing' && card && card.querySelector('.progress')) {
       const pct = Math.round((ev.pct || 0) * 100);
       card.querySelector('.progress > div').style.width = `${pct}%`;
-      card.querySelector('.song-sub').firstChild.textContent = `${STAGES[ev.stage] || 'Procesando…'} ${pct}%`;
+      card.querySelector('.song-sub').firstChild.textContent = progressLabel(progress.get(ev.id));
     } else {
       renderLibrary();
     }

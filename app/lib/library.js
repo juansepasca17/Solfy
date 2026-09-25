@@ -111,7 +111,7 @@ class Library {
     }
   }
 
-  importMp3(src, { lyrics = false } = {}) {
+  async importMp3(src, { lyrics = false } = {}) {
     if (typeof src !== 'string' || path.extname(src).toLowerCase() !== '.mp3') throw new Error('Solo se aceptan archivos .mp3');
     const stat = fs.statSync(src);
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_MP3_BYTES) throw new Error('El MP3 debe pesar como máximo 60 MB');
@@ -119,7 +119,7 @@ class Library {
     const id = crypto.randomUUID();
     const dir = path.join(this.root, id);
     fs.mkdirSync(dir);
-    fs.copyFileSync(src, path.join(dir, 'source.mp3'));
+    await fs.promises.copyFile(src, path.join(dir, 'source.mp3'));
     const title = path.basename(src, path.extname(src)).slice(0, 120);
     const song = { id, title, status: 'queued', lyricsRequested: !!lyrics, created: new Date().toISOString() };
     writeJson(path.join(dir, 'song.json'), song);
@@ -155,20 +155,20 @@ class Library {
     return path.join(this.dir(id), file);
   }
 
-  writeMidis(id) {
+  async writeMidis(id) {
     const dir = this.dir(id);
     const meta = readJson(path.join(dir, 'meta.json'), {});
     const song = this.song(id) || {};
     const opts = { title: song.title || 'Solfy', tuningCents: meta.tuning_offset_cents || 0 };
-    fs.writeFileSync(path.join(dir, 'melody.mid'), buildMidi(readJson(path.join(dir, 'notes.json'), []), opts));
-    fs.writeFileSync(path.join(dir, 'melody_learning.mid'), buildMidi(readJson(path.join(dir, 'notes_learning.json'), []), opts));
+    await fs.promises.writeFile(path.join(dir, 'melody.mid'), buildMidi(readJson(path.join(dir, 'notes.json'), []), opts));
+    await fs.promises.writeFile(path.join(dir, 'melody_learning.mid'), buildMidi(readJson(path.join(dir, 'notes_learning.json'), []), opts));
   }
 
   midiPath(id, mode) {
     return path.join(this.dir(id), mode === 'learning' ? 'melody_learning.mid' : 'melody.mid');
   }
 
-  saveNotes(id, mode, notes) {
+  async saveNotes(id, mode, notes) {
     const file = MODES[mode];
     if (!file) throw new Error('Modo inválido');
     const dir = this.dir(id);
@@ -176,17 +176,17 @@ class Library {
     const backup = path.join(dir, file.replace('.json', '.orig.json'));
     if (!fs.existsSync(backup)) fs.copyFileSync(path.join(dir, file), backup);
     writeJson(path.join(dir, file), clean);
-    this.writeMidis(id);
+    await this.writeMidis(id);
     return clean;
   }
 
-  restoreNotes(id, mode) {
+  async restoreNotes(id, mode) {
     const file = MODES[mode];
     if (!file) throw new Error('Modo inválido');
     const dir = this.dir(id);
     const backup = path.join(dir, file.replace('.json', '.orig.json'));
     if (fs.existsSync(backup)) fs.renameSync(backup, path.join(dir, file));
-    this.writeMidis(id);
+    await this.writeMidis(id);
     return readJson(path.join(dir, file), []);
   }
 

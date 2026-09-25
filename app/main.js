@@ -54,7 +54,9 @@ function registerIpc() {
       filters: [{ name: 'MP3', extensions: ['mp3'] }],
     });
     if (r.canceled) return [];
-    return r.filePaths.map((p) => importOne(p, opts));
+    const added = [];
+    for (const p of r.filePaths) added.push(await importOne(p, opts));
+    return added;
   });
 
   handle('library:importPath', (p, opts = {}) => importOne(p, opts));
@@ -108,8 +110,8 @@ function registerIpc() {
   handle('app:info', () => ({ version: app.getVersion(), dark: nativeTheme.shouldUseDarkColors }));
 }
 
-function importOne(p, opts) {
-  const song = library.importMp3(p, { lyrics: !!(opts && opts.lyrics) });
+async function importOne(p, opts) {
+  const song = await library.importMp3(p, { lyrics: !!(opts && opts.lyrics) });
   runner.enqueue(song.id);
   return song;
 }

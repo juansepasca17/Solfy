@@ -17,10 +17,12 @@ def midi_to_freq(midi: float) -> float:
 
 
 def notes_to_json(notes: list[Note]) -> list[dict]:
-    return [
-        {"note": note_name(n.pitch), "freq": round(midi_to_freq(n.pitch), 2), "start": round(n.start, 3), "end": round(n.end, 3)}
-        for n in notes
-    ]
+    out = []
+    for n in notes:
+        start, end = max(0.0, round(n.start, 3)), round(n.end, 3)
+        if end > start:  # nunca exportar tiempos negativos ni notas vacías
+            out.append({"note": note_name(n.pitch), "freq": round(midi_to_freq(n.pitch), 2), "start": start, "end": end})
+    return out
 
 
 def write_json(path: Path, data) -> None:

@@ -1,7 +1,7 @@
 {
   "name": "solfy",
   "productName": "Solfy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Karaoke y solfeo con piano guía, 100 % local.",
   "main": "main.js",
   "private": true,
@@ -10,6 +10,7 @@
   "scripts": {
     "start": "electron .",
     "check": "node scripts/check.js",
+    "test": "node --test test/midi.test.js",
     "fetch-piano": "node scripts/fetch-piano.js",
     "dist": "electron-builder --win nsis --publish never"
   },

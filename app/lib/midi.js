@@ -12,9 +12,17 @@ function nameToMidi(name) {
   return NAMES.indexOf(m[1]) + (Number(m[2]) + 1) * 12;
 }
 
+const MAX_VARLEN = 0x0fffffff; // máximo que admite un número de longitud variable MIDI (4 bytes)
+
 function varLen(n) {
-  const bytes = [n & 0x7f];
-  while ((n >>= 7)) bytes.unshift((n & 0x7f) | 0x80);
+  // Con un número negativo o NaN, un bucle con `>>=` no termina nunca y congela la app.
+  if (!Number.isInteger(n) || n < 0 || n > MAX_VARLEN) throw new RangeError(`Valor MIDI inválido: ${n}`);
+  const bytes = [n % 128];
+  n = Math.floor(n / 128);
+  while (n > 0) {
+    bytes.unshift((n % 128) | 0x80);
+    n = Math.floor(n / 128);
+  }
   return bytes;
 }
 
@@ -33,8 +41,11 @@ function buildMidi(notes, { title = 'Solfy', tuningCents = 0 } = {}) {
   for (const n of notes) {
     const pitch = nameToMidi(n.note);
     if (pitch < 0 || pitch > 127) continue;
-    const on = Math.round(n.start * TICKS_PER_SEC);
-    const off = Math.max(on + 1, Math.round(n.end * TICKS_PER_SEC));
+    const start = Number(n.start);
+    const end = Number(n.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > MAX_VARLEN / TICKS_PER_SEC) continue;
+    const on = Math.round(start * TICKS_PER_SEC);
+    const off = Math.max(on + 1, Math.round(end * TICKS_PER_SEC));
     events.push({ t: on, o: 1, data: [0x90, pitch, 90] });
     events.push({ t: off, o: 0, data: [0x80, pitch, 0] }); // note-off antes que note-on del mismo tick
   }

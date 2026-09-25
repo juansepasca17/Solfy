@@ -60,6 +60,7 @@ jobs:
         run: |
           npm ci
           npm run check
+          npm test
 
       - name: Instalador NSIS
         working-directory: app

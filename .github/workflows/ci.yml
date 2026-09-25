@@ -32,5 +32,7 @@ jobs:
         working-directory: app
       - run: npm run check
         working-directory: app
+      - run: npm test
+        working-directory: app
       - run: npm audit --omit=dev --audit-level=high
         working-directory: app

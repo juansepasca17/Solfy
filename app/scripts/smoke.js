@@ -15,23 +15,42 @@ module.exports = async function smoke({ win, library, runner }) {
   const log = (...a) => console.log('[smoke]', ...a);
   const js = (code) => win.webContents.executeJavaScript(code, true);
   const shot = async (name) => {
+    capturing = true;
     const img = await win.webContents.capturePage();
     fs.writeFileSync(path.join(out, name), img.toPNG());
     log('captura', name);
+    // el intervalo de 100 ms que llega tarde por la captura se evalúa en el siguiente tick
+    setTimeout(() => (capturing = false), 150);
+    step = `después de ${name}`;
   };
+
+  // Bloqueo del proceso principal: si un setInterval de 100 ms llega tarde, algo lo bloqueó.
+  // Las capturas (capturePage + toPNG) bloquean el proceso principal por sí mismas: se excluyen.
+  let maxLag = 0;
+  let step = 'inicio';
+  let capturing = false;
+  let expected = Date.now() + 100;
+  const lagTimer = setInterval(() => {
+    const now = Date.now();
+    const lag = now - expected;
+    if (lag > 250) log(`bloqueo ${lag} ms durante: ${capturing ? 'captura (se ignora)' : step}`);
+    if (!capturing) maxLag = Math.max(maxLag, lag);
+    expected = now + 100;
+  }, 100);
 
   try {
     await new Promise((r) => (win.webContents.isLoading() ? win.webContents.once('did-finish-load', r) : r()));
     await sleep(800);
     let song = library.list().find((s) => s.status === 'ready');
     if (!song) {
-      song = library.importMp3(mp3, { lyrics: process.env.SOLFY_SMOKE_LYRICS === '1' });
+      song = await library.importMp3(mp3, { lyrics: process.env.SOLFY_SMOKE_LYRICS === '1' });
       runner.enqueue(song.id);
       await sleep(1500);
       await shot('01-procesando.png');
       const t0 = Date.now();
+      step = 'procesando (motor) y fin del procesamiento';
       while (!['ready', 'error'].includes(library.song(song.id).status)) {
-        if (Date.now() - t0 > 15 * 60 * 1000) throw new Error('timeout procesando');
+        if (Date.now() - t0 > 40 * 60 * 1000) throw new Error('timeout procesando');
         await sleep(2000);
       }
       log('estado', library.song(song.id).status, library.song(song.id).error || '', `${((Date.now() - t0) / 1000).toFixed(0)}s`);
@@ -40,6 +59,7 @@ module.exports = async function smoke({ win, library, runner }) {
     await sleep(600);
     await shot('02-biblioteca.png');
 
+    step = 'abrir práctica';
     await js(`document.querySelector('.song[data-id="${song.id}"] [data-act=open]').click()`);
     await sleep(1500);
     await js(`document.querySelector('#show-curve').click()`);
@@ -105,11 +125,14 @@ module.exports = async function smoke({ win, library, runner }) {
     await js(`document.querySelector('#btn-settings').click()`);
     await sleep(600);
     await shot('09-ajustes.png');
+    log(`bloqueo máximo del proceso principal: ${maxLag} ms`);
+    if (maxLag > 1000) throw new Error(`el proceso principal se bloqueó ${maxLag} ms`);
     log('OK');
   } catch (e) {
     log('FALLÓ', e.stack || e);
     process.exitCode = 1;
   } finally {
+    clearInterval(lagTimer);
     app.quit();
   }
 };

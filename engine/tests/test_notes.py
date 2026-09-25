@@ -99,6 +99,20 @@ def test_learning_mode_fills_small_gaps_and_snaps():
     assert learn[1].end == 1.0
 
 
+def test_learning_snap_never_negative():
+    # Regresión v0.1.0 (Gitana): primer beat en 0.3 s -> la grilla hacia atrás daba -0.05 s
+    normal = [Note(74, 0.0, 0.99), Note(73, 1.0, 1.5)]
+    beats = np.arange(0.3, 10, 0.35)
+    learn = simplify(normal, beats=beats, duration=10.0)
+    assert all(n.start >= 0 for n in learn)
+    assert learn[0].start == 0.0
+
+
+def test_json_drops_negative_times():
+    data = notes_to_json([Note(60, -0.05, 0.5), Note(62, 0.6, 0.6)])
+    assert data == [{"note": "C4", "freq": 261.63, "start": 0.0, "end": 0.5}]
+
+
 def test_json_schema():
     data = notes_to_json([Note(60, 1.2, 1.85), Note(64, 1.85, 2.4)])
     assert data == [

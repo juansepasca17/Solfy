@@ -3,7 +3,11 @@
 
 const { spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+
+const WATCHDOG_MS = 10 * 60 * 1000; // sin eventos durante 10 min = colgado
+const EXIT_GRACE_MS = 15000; // tras "done", tiempo para que el proceso cierre solo
 const { app } = require('electron');
 
 function engineCommand() {
@@ -91,11 +95,25 @@ class EngineRunner {
     if (song.lyricsRequested) args.push('--lyrics');
 
     const child = spawn(cmd, args, { cwd, env: engineEnv(models), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    const job = { id, child, cancelled: false, error: null, done: false, stderr: '' };
+    // Prioridad baja: el motor usa mucho CPU durante minutos y la ventana debe seguir respondiendo.
+    try {
+      os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+    } catch {
+      /* si no se puede, sigue con prioridad normal */
+    }
+    const job = { id, child, cancelled: false, error: null, done: false, finished: false, stderr: '', started: Date.now(), lastEvent: Date.now() };
     job.closed = new Promise((resolve) => child.once('exit', resolve));
     this.current = job;
     this.library.update(id, { status: 'processing', error: null, progress: 0 });
-    this.notify({ id, status: 'processing', stage: 'starting', pct: 0 });
+    this.notify({ id, status: 'processing', stage: 'starting', pct: 0, elapsed: 0 });
+
+    // Sin eventos durante mucho tiempo = motor colgado.
+    job.watchdog = setInterval(() => {
+      if (Date.now() - job.lastEvent > WATCHDOG_MS) {
+        job.error = 'El motor dejó de responder. Revisa engine.log en la carpeta de la canción.';
+        killTree(child);
+      }
+    }, 30000);
 
     let buf = '';
     child.stdout.setEncoding('utf8');
@@ -112,44 +130,67 @@ class EngineRunner {
         } catch {
           continue;
         }
-        if (ev.type === 'progress') this.notify({ id, status: 'processing', stage: ev.stage, pct: ev.pct });
-        else if (ev.type === 'error') job.error = String(ev.message || 'Error desconocido');
-        else if (ev.type === 'done') job.done = true;
+        job.lastEvent = Date.now();
+        if (ev.type === 'progress') {
+          this.notify({ id, status: 'processing', stage: ev.stage, pct: ev.pct, elapsed: (Date.now() - job.started) / 1000 });
+        } else if (ev.type === 'error') {
+          job.error = String(ev.message || 'Error desconocido');
+        } else if (ev.type === 'done') {
+          // Los resultados ya están escritos: no hace falta esperar a que el proceso cierre.
+          job.done = true;
+          this._complete(job, dir);
+          job.exitTimer = setTimeout(() => killTree(child), EXIT_GRACE_MS);
+        }
       }
     });
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (d) => {
       job.stderr = (job.stderr + d).slice(-4000);
     });
-    const finish = (code) => {
-      if (this.current !== job) return;
-      this.current = null;
+    child.on('close', (code) => {
+      clearTimeout(job.exitTimer);
+      if (!job.done) this._complete(job, dir, code);
+    });
+    child.on('error', (e) => {
+      job.error = `No se pudo iniciar el motor: ${e.message}`;
+      this._complete(job, dir, -1);
+    });
+  }
+
+  async _complete(job, dir, code = 0) {
+    if (job.finished) return;
+    job.finished = true;
+    clearInterval(job.watchdog);
+    const { id } = job;
+    if (this.current === job) this.current = null;
+    try {
       if (job.cancelled) {
         this.library.update(id, { status: 'error', error: 'Cancelado' });
         this.notify({ id, status: 'error', error: 'Cancelado' });
-      } else if (job.done && code === 0) {
+      } else if (job.done) {
+        const meta = JSON.parse(await fs.promises.readFile(path.join(dir, 'meta.json'), 'utf8'));
+        let warning = null;
         try {
-          this.library.writeMidis(id);
-          const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
-          this.library.update(id, { status: 'ready', duration: meta.duration, hasLyrics: !!meta.lyrics, progress: 1 });
-          this.notify({ id, status: 'ready' });
+          await this.library.writeMidis(id);
         } catch (e) {
-          this.library.update(id, { status: 'error', error: String(e.message || e) });
-          this.notify({ id, status: 'error', error: String(e.message || e) });
+          warning = `No se pudo crear el MIDI: ${e.message}`;
+          console.error('[solfy]', warning);
         }
+        const seconds = Math.round((Date.now() - job.started) / 1000);
+        this.library.update(id, { status: 'ready', duration: meta.duration, hasLyrics: !!meta.lyrics, progress: 1, processSeconds: seconds, warning });
+        this.notify({ id, status: 'ready', warning });
       } else {
         const error = job.error || `El motor terminó con código ${code}`;
         if (!job.error) console.error('[solfy] engine stderr:', job.stderr);
         this.library.update(id, { status: 'error', error });
         this.notify({ id, status: 'error', error });
       }
-      this._next();
-    };
-    child.on('close', finish);
-    child.on('error', (e) => {
-      job.error = `No se pudo iniciar el motor: ${e.message}`;
-      finish(-1);
-    });
+    } catch (e) {
+      const error = String(e.message || e);
+      this.library.update(id, { status: 'error', error });
+      this.notify({ id, status: 'error', error });
+    }
+    this._next();
   }
 }
 
