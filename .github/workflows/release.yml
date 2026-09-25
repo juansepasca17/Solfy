@@ -57,7 +57,7 @@ jobs:
           SOLFY_MODELS="$PWD/models" engine/dist/solfy-engine/solfy-engine.exe process --input test_song.mp3 --out smoke_out --device cpu | tail -n 2
           python -c "import json; n=json.load(open('smoke_out/notes.json')); print(len(n), 'notas'); assert len(n) >= 20"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
