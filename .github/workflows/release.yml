@@ -23,7 +23,7 @@ jobs:
           APP=$(node -p "require('./app/package.json').version")
           [ "v$APP" = "${GITHUB_REF_NAME}" ] || { echo "app/package.json ($APP) no coincide con el tag ${GITHUB_REF_NAME}"; exit 1; }
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
