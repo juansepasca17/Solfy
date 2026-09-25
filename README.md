@@ -8,7 +8,7 @@ Subes un MP3 y Solfy separa la voz de la música, convierte la melodía del cant
 
 ## Qué hace
 
-- **Solo MP3** (hasta 60 MB / 15 min). El procesamiento es local y tarda unos minutos por canción en una CPU normal. Se hace una sola vez.
+- **Solo MP3** (hasta 60 MB / 15 min). El procesamiento es local y tarda unos minutos por canción en una CPU normal. Se hace una sola vez. (Es recomendado mp3 por debajo de las 5 mb para mejor estabilidad)
 - **Separación de voz** con Demucs (`htdemucs`) y **melodía** con CREPE.
 - **Dos dificultades:**
   - **Normal:** la melodía como la canta el artista.
