@@ -81,7 +81,7 @@ jobs:
 
       - name: Artefacto (ejecución manual)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: solfy-installer
           path: |
