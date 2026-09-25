@@ -1,0 +1,89 @@
+name: Release
+
+# Al subir un tag vX.Y.Z se construye el instalador de Windows y se publica en Releases.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versión del tag = versión de la app
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          APP=$(node -p "require('./app/package.json').version")
+          [ "v$APP" = "${GITHUB_REF_NAME}" ] || { echo "app/package.json ($APP) no coincide con el tag ${GITHUB_REF_NAME}"; exit 1; }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: engine/requirements*.txt
+
+      - name: Dependencias del motor
+        run: pip install -r engine/requirements-dev.txt --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Pruebas del motor
+        run: pytest -q engine/tests
+
+      - name: Modelos (se empaquetan; la app nunca descarga nada)
+        run: python scripts/fetch_models.py --out models
+
+      - name: Motor -> exe (PyInstaller)
+        working-directory: engine
+        run: pyinstaller solfy_engine.spec --noconfirm
+
+      - name: Prueba del exe con una canción sintética
+        shell: bash
+        run: |
+          python scripts/make_test_song.py test_song.mp3
+          SOLFY_MODELS="$PWD/models" engine/dist/solfy-engine/solfy-engine.exe process --input test_song.mp3 --out smoke_out | tail -n 2
+          python -c "import json; n=json.load(open('smoke_out/notes.json')); print(len(n), 'notas'); assert len(n) >= 20"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Interfaz
+        working-directory: app
+        run: |
+          npm ci
+          npm run check
+
+      - name: Instalador NSIS
+        working-directory: app
+        run: npx electron-builder --win nsis --publish never
+
+      - name: SHA256
+        shell: bash
+        working-directory: app/dist
+        run: sha256sum Solfy-Setup-*.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Publicar release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" app/dist/Solfy-Setup-*.exe app/dist/SHA256SUMS.txt \
+            --title "Solfy ${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
+
+      - name: Artefacto (ejecución manual)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: solfy-installer
+          path: |
+            app/dist/Solfy-Setup-*.exe
+            app/dist/SHA256SUMS.txt

@@ -1,0 +1,79 @@
+{
+  "name": "solfy",
+  "productName": "Solfy",
+  "version": "0.1.0",
+  "description": "Karaoke y solfeo con piano guía, 100 % local.",
+  "main": "main.js",
+  "private": true,
+  "license": "MIT",
+  "author": "juansepasca17",
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check.js",
+    "fetch-piano": "node scripts/fetch-piano.js",
+    "dist": "electron-builder --win nsis --publish never"
+  },
+  "build": {
+    "appId": "io.github.juansepasca17.solfy",
+    "productName": "Solfy",
+    "artifactName": "Solfy-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**",
+      "renderer/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../engine/dist/solfy-engine",
+        "to": "engine",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../models",
+        "to": "engine/models",
+        "filter": [
+          "**/*",
+          "!**/.cache/**"
+        ]
+      }
+    ],
+    "asar": true,
+    "electronLanguages": [
+      "es",
+      "es-419",
+      "en-US"
+    ],
+    "publish": null,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Solfy",
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  }
+}

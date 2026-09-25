@@ -1,0 +1,29 @@
+# Python
+engine/.venv/
+engine/build/
+engine/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Modelos (se descargan en la build con scripts/fetch_models.py)
+models/
+
+# Node / Electron
+app/node_modules/
+app/dist/
+
+# Tu música y lo que se genera a partir de ella nunca va al repo
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.m4a
+*.mid
+*.midi
+!app/renderer/assets/piano/*.mp3
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.log

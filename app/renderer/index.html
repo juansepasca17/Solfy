@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Solfy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="assets/icon.png" alt="" width="24" height="24"><span>Solfy</span></div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="library" class="active">Biblioteca</button>
+      <button role="tab" data-view="practice" id="tab-practice" disabled>Práctica</button>
+      <button role="tab" data-view="history">Historial</button>
+    </nav>
+    <div class="top-actions">
+      <button class="icon-btn" id="btn-settings" title="Ajustes" aria-label="Ajustes">⚙</button>
+      <button class="icon-btn" id="btn-theme" title="Cambiar tema claro/oscuro" aria-label="Cambiar tema">◐</button>
+    </div>
+  </header>
+
+  <!-- ============ Biblioteca ============ -->
+  <main id="view-library" class="view active">
+    <section class="import-card" id="dropzone">
+      <div>
+        <h2>Sube una canción</h2>
+        <p class="muted">Solo MP3 (hasta 60 MB / 15 min). Se procesa en tu PC: se separa la voz y se convierte en notas de piano. Tarda unos minutos.</p>
+      </div>
+      <div class="import-actions">
+        <label class="check"><input type="checkbox" id="opt-lyrics"> Transcribir letra (más lento)</label>
+        <button class="btn primary" id="btn-import">Elegir MP3…</button>
+      </div>
+      <div class="drop-hint">o arrastra el archivo aquí</div>
+    </section>
+    <section>
+      <h3 class="section-title">Tus canciones</h3>
+      <div id="song-list" class="song-list"></div>
+      <p id="empty-library" class="muted empty">Todavía no hay canciones.</p>
+    </section>
+  </main>
+
+  <!-- ============ Práctica ============ -->
+  <main id="view-practice" class="view practice">
+    <div class="stage" id="stage">
+      <canvas id="roll"></canvas>
+      <div class="hud">
+        <div id="hud-note" class="hud-note">–</div>
+        <div id="hud-label" class="hud-label">Escucha</div>
+      </div>
+      <div class="hud-right">
+        <div id="hud-title" class="hud-title"></div>
+        <div id="hud-live" class="hud-live"></div>
+      </div>
+      <div id="editor-bar" class="editor-bar" hidden>
+        <strong>Editor</strong>
+        <span class="muted">Clic: seleccionar · Supr: borrar · ↑/↓: semitono · M: unir con la siguiente · Doble clic: letra · Ctrl+Z: deshacer · rueda/arrastre: moverse</span>
+        <span class="spacer"></span>
+        <button class="btn" id="ed-restore">Restaurar original</button>
+        <button class="btn primary" id="ed-save">Guardar</button>
+      </div>
+      <input id="lyric-input" class="lyric-input" hidden maxlength="60" aria-label="Letra de la nota">
+    </div>
+
+    <div class="controls">
+      <div class="row">
+        <button class="btn round primary" id="btn-play" title="Reproducir / pausar (espacio)">▶</button>
+        <button class="btn round" id="btn-stop" title="Volver al inicio">■</button>
+        <span id="time" class="time">0:00 / 0:00</span>
+        <input type="range" id="seek" min="0" max="1000" value="0" class="grow" aria-label="Posición">
+      </div>
+      <div class="row wrap">
+        <div class="seg" role="group" aria-label="Modo">
+          <button data-play="listen" class="active" title="El piano toca la melodía">Escuchar guía</button>
+          <button data-play="sing" title="Canta tú, con micrófono y puntaje">Tu turno</button>
+        </div>
+        <div class="seg" role="group" aria-label="Dificultad">
+          <button data-diff="learning" title="Notas largas y redondeadas">Aprendizaje</button>
+          <button data-diff="normal" class="active" title="Como la canta el artista">Normal</button>
+        </div>
+        <label class="field">Suena
+          <select id="mix">
+            <option value="both">Piano + instrumental</option>
+            <option value="piano">Solo piano</option>
+            <option value="inst">Solo instrumental</option>
+            <option value="pianoSoft">Instrumental + piano bajito</option>
+          </select>
+        </label>
+        <label class="field">Velocidad <input type="range" id="speed" min="50" max="100" step="5" value="100"><output id="speed-out">100%</output></label>
+        <span class="field">Tono
+          <button class="btn mini" id="tr-down" title="Bajar un semitono">−</button>
+          <output id="tr-out">0</output>
+          <button class="btn mini" id="tr-up" title="Subir un semitono">+</button>
+        </span>
+        <label class="check" title="Cantar una octava arriba o abajo cuenta como correcto"><input type="checkbox" id="octave-free"> Octava libre</label>
+        <span class="field">Bucle
+          <button class="btn mini" id="loop-a" title="Marcar inicio del bucle">A</button>
+          <button class="btn mini" id="loop-b" title="Marcar fin del bucle">B</button>
+          <button class="btn mini" id="loop-clear" title="Quitar bucle">✕</button>
+        </span>
+        <label class="check"><input type="checkbox" id="show-curve"> Voz original</label>
+        <label class="check" id="lyrics-toggle-wrap"><input type="checkbox" id="show-lyrics" checked> Letra</label>
+        <button class="btn" id="btn-edit">Editar notas</button>
+        <button class="btn" id="btn-midi">Exportar MIDI</button>
+      </div>
+      <p id="transpose-hint" class="hint" hidden>Con el instrumental sonando, usa ±12 (una octava) para no desafinar con la banda.</p>
+    </div>
+  </main>
+
+  <!-- ============ Historial ============ -->
+  <main id="view-history" class="view">
+    <div class="stats" id="stats"></div>
+    <label class="field">Canción
+      <select id="history-filter"><option value="">Todas</option></select>
+    </label>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Fecha</th><th>Canción</th><th>Modo</th><th>Velocidad</th><th>Tono</th><th>Notas acertadas</th><th>Puntaje</th></tr></thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+    <p id="empty-history" class="muted empty">Aún no hay puntajes. Ve a Práctica → "Tu turno".</p>
+  </main>
+
+  <!-- ============ Resultado ============ -->
+  <dialog id="result-dialog" class="dialog">
+    <h2>Resultado</h2>
+    <div class="result-grade" id="res-grade">A</div>
+    <div class="result-score"><span id="res-score">0</span><small>/100</small></div>
+    <p id="res-detail" class="muted"></p>
+    <div id="res-map" class="res-map" aria-label="Mapa de notas"></div>
+    <p id="res-compare" class="muted"></p>
+    <div class="dialog-actions">
+      <button class="btn" id="res-history">Ver historial</button>
+      <button class="btn primary" id="res-close">Seguir practicando</button>
+    </div>
+  </dialog>
+
+  <!-- ============ Ajustes ============ -->
+  <dialog id="settings-dialog" class="dialog">
+    <h2>Ajustes</h2>
+    <label class="field block">Nombres de notas
+      <select id="set-notation">
+        <option value="latin">Do Re Mi</option>
+        <option value="english">C D E</option>
+      </select>
+    </label>
+    <label class="field block">Tema
+      <select id="set-theme">
+        <option value="system">Igual que Windows</option>
+        <option value="light">Claro</option>
+        <option value="dark">Oscuro</option>
+      </select>
+    </label>
+    <label class="field block">Micrófono
+      <select id="set-mic"><option value="">Predeterminado</option></select>
+    </label>
+    <label class="field block">Latencia del micrófono: <output id="set-latency-out">100 ms</output>
+      <input type="range" id="set-latency" min="0" max="300" step="5" value="100">
+    </label>
+    <p class="muted small">Calibrar: ponte los audífonos, pulsa el botón y di "ta" justo en cada clic (8 clics).</p>
+    <div class="row"><button class="btn" id="btn-calibrate">Calibrar latencia</button><span id="calib-status" class="muted small"></span></div>
+    <label class="field block">Volumen piano <input type="range" id="set-vol-piano" min="0" max="100" value="80"></label>
+    <label class="field block">Volumen instrumental <input type="range" id="set-vol-inst" min="0" max="100" value="80"></label>
+    <p class="muted small privacy">🔒 Solfy funciona sin internet. Tus canciones, notas y puntajes se guardan solo en esta PC y la app bloquea cualquier conexión de red.</p>
+    <p class="muted small" id="about"></p>
+    <div class="dialog-actions"><button class="btn primary" id="set-close">Listo</button></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
