@@ -3,7 +3,7 @@
 torch==2.5.1+cpu
 torchaudio==2.5.1+cpu
 demucs==4.0.1
-torchcrepe==0.0.23
+torchcrepe==0.0.24
 librosa==0.10.2.post1
 soundfile==0.12.1
 numpy==1.26.4
